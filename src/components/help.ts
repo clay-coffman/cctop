@@ -1,8 +1,9 @@
 /**
- * Help overlay — keybinding reference.
+ * Help overlay — keybinding reference. Static content; built once and
+ * shown/hidden via .visible.
  */
 
-import { Box, Text } from "@opentui/core";
+import { Box, Text, BoxRenderable } from "@opentui/core";
 import { colors } from "../lib/theme";
 
 const keybindings = [
@@ -18,30 +19,23 @@ const keybindings = [
   ["q / Ctrl+C", "Quit"],
 ];
 
-export function createHelpPanel(width: number, height: number) {
-  const panelWidth = Math.min(50, width - 4);
-  const panelHeight = Math.min(keybindings.length + 5, height - 4);
+export class HelpPanel {
+  readonly node: BoxRenderable;
 
-  const rows = keybindings.map(([key, desc]) =>
-    Box(
-      { width: "100%", height: 1, flexDirection: "row", paddingLeft: 2 },
-      Text({
-        content: key.padEnd(14),
-        fg: colors.yellow,
-        bold: true,
-      }),
-      Text({
-        content: desc,
-        fg: colors.textPrimary,
-      })
-    )
-  );
+  constructor(renderer: any) {
+    const panelHeight = keybindings.length + 5;
+    const panelWidth = 50;
 
-  return Box(
-    {
+    const rows = keybindings.map(([key, desc]) =>
+      Box(
+        { width: "100%", height: 1, flexDirection: "row", paddingLeft: 2 },
+        Text({ content: key.padEnd(14), fg: colors.yellow, bold: true }),
+        Text({ content: desc, fg: colors.textPrimary })
+      )
+    );
+
+    this.node = new BoxRenderable(renderer, {
       position: "absolute",
-      left: Math.floor((width - panelWidth) / 2),
-      top: Math.floor((height - panelHeight) / 2),
       width: panelWidth,
       height: panelHeight,
       flexDirection: "column",
@@ -50,16 +44,31 @@ export function createHelpPanel(width: number, height: number) {
       backgroundColor: colors.bgPanel,
       paddingLeft: 1,
       paddingRight: 1,
-      paddingTop: 0,
-      paddingBottom: 0,
-    },
-    Text({ content: " Keybindings ", fg: colors.yellow, bold: true }),
-    Text({ content: "", fg: colors.textMuted }),
-    ...rows,
-    Text({ content: "", fg: colors.textMuted }),
-    Box(
-      { width: "100%", flexDirection: "row", justifyContent: "center" },
-      Text({ content: "Press ? or Esc to close", fg: colors.textDim })
-    )
-  );
+      visible: false,
+    });
+
+    // Build inner content via Box(...) tree and add to the real node.
+    const inner = Box(
+      { width: "100%", height: panelHeight, flexDirection: "column" },
+      Text({ content: " Keybindings ", fg: colors.yellow, bold: true }),
+      Text({ content: "", fg: colors.textMuted }),
+      ...rows,
+      Text({ content: "", fg: colors.textMuted }),
+      Box(
+        { width: "100%", flexDirection: "row", justifyContent: "center" },
+        Text({ content: "Press ? or Esc to close", fg: colors.textDim })
+      )
+    );
+    this.node.add(inner as any);
+  }
+
+  /** Reposition relative to the parent terminal size. */
+  reposition(termWidth: number, termHeight: number) {
+    const w = Math.min(50, termWidth - 4);
+    const h = Math.min(keybindings.length + 5, termHeight - 4);
+    this.node.width = w;
+    this.node.height = h;
+    this.node.left = Math.floor((termWidth - w) / 2);
+    this.node.top = Math.floor((termHeight - h) / 2);
+  }
 }
