@@ -1,23 +1,40 @@
 /**
  * cctop theme — color palette and formatting utilities.
- * Inspired by btop's aesthetic: dark background, vibrant accents.
+ *
+ * Palette is chosen at startup from `~/.cache/theme-mode` (the same file the
+ * user's `theme-sync` daemon writes — see CLAUDE.md). Falls back to dark
+ * when the file is missing or unreadable. Restart cctop to pick up a system
+ * theme switch; live reload is a follow-up.
  */
 
-// Color palette
-export const colors = {
-  // Backgrounds
+import { readFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
+
+const THEME_MODE_FILE = join(homedir(), ".cache", "theme-mode");
+
+function readThemeMode(): "light" | "dark" {
+  try {
+    return readFileSync(THEME_MODE_FILE, "utf-8").trim() === "light"
+      ? "light"
+      : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
+// ─── Dark palette (GitHub Dark inspired — original cctop look) ─────
+const dark = {
   bg: "#0d1117",
   bgPanel: "#161b22",
   bgHighlight: "#21262d",
   bgSelected: "#1f3a5f",
 
-  // Text
   textPrimary: "#e6edf3",
   textSecondary: "#8b949e",
   textDim: "#484f58",
   textMuted: "#30363d",
 
-  // Accents
   green: "#3fb950",
   greenBright: "#56d364",
   blue: "#58a6ff",
@@ -31,7 +48,6 @@ export const colors = {
   cyan: "#39d2c0",
   pink: "#f778ba",
 
-  // Status colors
   active: "#3fb950",
   idle: "#8b949e",
   waiting: "#d29922",
@@ -39,13 +55,11 @@ export const colors = {
   done: "#58a6ff",
   ended: "#484f58",
 
-  // Borders
   border: "#30363d",
   borderFocus: "#58a6ff",
 } as const;
 
-// Session color rotation (for distinguishing sessions visually)
-export const sessionColors = [
+const darkSessionColors = [
   "#58a6ff", // blue
   "#3fb950", // green
   "#bc8cff", // purple
@@ -56,6 +70,60 @@ export const sessionColors = [
   "#ff7b72", // red
 ];
 
+// ─── Light palette (GitHub Light, matches user's tmux/bat/starship) ─
+const light: typeof dark = {
+  bg: "#ffffff",
+  bgPanel: "#f6f8fa",
+  bgHighlight: "#eaeef2",
+  bgSelected: "#ddf4ff",
+
+  textPrimary: "#1f2328",
+  textSecondary: "#57606a",
+  textDim: "#8c959f",
+  textMuted: "#d0d7de",
+
+  green: "#1a7f37",
+  greenBright: "#2da44e",
+  blue: "#0969da",
+  blueBright: "#218bff",
+  purple: "#8250df",
+  yellow: "#9a6700",
+  yellowBright: "#bf8700",
+  orange: "#bc4c00",
+  red: "#cf222e",
+  redBright: "#d12e3f",
+  cyan: "#1b7c83",
+  pink: "#bf3989",
+
+  active: "#1a7f37",
+  idle: "#57606a",
+  waiting: "#9a6700",
+  error: "#cf222e",
+  done: "#0969da",
+  ended: "#8c959f",
+
+  border: "#d0d7de",
+  borderFocus: "#0969da",
+} as const;
+
+const lightSessionColors = [
+  "#0969da", // blue
+  "#1a7f37", // green
+  "#8250df", // purple
+  "#bc4c00", // orange
+  "#1b7c83", // cyan
+  "#bf3989", // pink
+  "#9a6700", // yellow
+  "#cf222e", // red
+];
+
+// ─── Active palette ────────────────────────────────────────────────
+const mode = readThemeMode();
+export const themeMode: "light" | "dark" = mode;
+export const colors = mode === "light" ? light : dark;
+export const sessionColors = mode === "light" ? lightSessionColors : darkSessionColors;
+
+// Session color rotation (for distinguishing sessions visually)
 const sessionColorMap = new Map<string, string>();
 let nextColorIdx = 0;
 
