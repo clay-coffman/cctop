@@ -52,6 +52,39 @@ const state: AppState = {
   termHeight: 40,
 };
 
+// Cache key of the last rendered tree. We skip a full rebuild when this
+// matches — the tree teardown + reconstruction allocates a lot, and prior
+// to this guard the 1 Hz poll was rebuilding identical trees and growing
+// RSS by ~150 MB/min. The 5s time bucket forces a refresh of "X ago"
+// timestamps and the active/idle status flip even when nothing else
+// changed.
+let lastRenderKey: string | null = null;
+const RENDER_TIME_BUCKET_MS = 5000;
+
+function computeRenderKey(s: AppState): string {
+  const sessions = s.sessions
+    .map((x) => `${x.session_id}:${Math.floor(x.last_seen)}:${x.status}:${x.event_count}`)
+    .join(",");
+  const lastEventId = s.events.length > 0 ? s.events[s.events.length - 1].id : 0;
+  const detail =
+    s.showDetail && s.sessions[s.selectedIndex]
+      ? `${s.sessions[s.selectedIndex].session_id}:${s.detailEvents.length}`
+      : "";
+  return [
+    Math.floor(Date.now() / RENDER_TIME_BUCKET_MS),
+    sessions,
+    lastEventId,
+    s.selectedIndex,
+    s.showDetail ? 1 : 0,
+    s.showHelp ? 1 : 0,
+    s.filterSessionId ?? "",
+    s.activityWindow,
+    s.termWidth,
+    s.termHeight,
+    detail,
+  ].join("|");
+}
+
 // ─── DB ──────────────────────────────────────────────
 const db = new CctopDB();
 
@@ -87,6 +120,13 @@ function pollData() {
 
 // ─── Render ──────────────────────────────────────────
 function render(renderer: any) {
+  // Skip the full tree rebuild if nothing visible has changed since the
+  // last render. The renderer keeps painting the existing tree at
+  // targetFps; we only need to rebuild on actual state changes.
+  const key = computeRenderKey(state);
+  if (key === lastRenderKey) return;
+  lastRenderKey = key;
+
   // Clear and rebuild the tree
   for (const child of renderer.root.getChildren()) {
     renderer.root.remove(child.id);
@@ -245,7 +285,10 @@ function render(renderer: any) {
 async function main() {
   const renderer = await createCliRenderer({
     exitOnCtrlC: false, // We handle Ctrl+C ourselves
-    targetFps: 15,
+    // 4 fps is plenty for a 1 Hz polling dashboard. Was 15, which made the
+    // OpenTUI internal frame loop work ~4x harder than necessary and
+    // amplified the per-frame allocations.
+    targetFps: 4,
   });
 
   // Track terminal size
