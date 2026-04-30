@@ -1,0 +1,19 @@
+{
+  "name": "cctop",
+  "version": "0.1.0",
+  "description": "btop-like TUI for monitoring Claude Code instances across tmux sessions",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch run src/index.ts",
+    "install-hooks": "bun run src/install-hooks.ts",
+    "db:reset": "rm -f ~/.cctop/events.db && echo 'Database reset'",
+    "db:vacuum": "sqlite3 ~/.cctop/events.db \"DELETE FROM events WHERE id <= (SELECT MAX(id) FROM events) - 500000; VACUUM;\""
+  },
+  "dependencies": {
+    "@opentui/core": "0.1.80"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}
