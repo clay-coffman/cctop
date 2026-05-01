@@ -1,9 +1,9 @@
 /**
  * Session detail panel — shown when pressing Enter on a session.
- * Shows full session info and its event history.
+ * Built once. update() mutates info row values and the recent-events list.
  */
 
-import { Box, Text } from "@opentui/core";
+import { Box, Text, BoxRenderable, TextRenderable } from "@opentui/core";
 import type { SessionInfo, Event } from "../lib/db";
 import {
   colors,
@@ -19,59 +19,58 @@ import {
   shortenSessionId,
 } from "../lib/theme";
 
-export interface SessionDetailProps {
-  session: SessionInfo;
-  events: Event[];
-  height: number;
-  width: number;
-}
+const MAX_EVENT_ROWS = 40;
 
-function createInfoRow(label: string, value: string, valueColor = colors.textPrimary) {
-  return Box(
-    { width: "100%", height: 1, flexDirection: "row" },
-    Text({
+class InfoRow {
+  readonly node: BoxRenderable;
+  readonly value: TextRenderable;
+
+  constructor(renderer: any, label: string) {
+    this.value = new TextRenderable(renderer, { content: "—", fg: colors.textPrimary });
+    this.node = new BoxRenderable(renderer, {
+      width: "100%",
+      height: 1,
+      flexDirection: "row",
+    });
+    const labelText = new TextRenderable(renderer, {
       content: `  ${label}: `.padEnd(16),
       fg: colors.textDim,
-    }),
-    Text({
-      content: value,
-      fg: valueColor,
-    })
-  );
+    });
+    this.node.add(labelText);
+    this.node.add(this.value);
+  }
+
+  set(content: string, fg = colors.textPrimary) {
+    this.value.content = content;
+    this.value.fg = fg;
+  }
 }
 
-export function createSessionDetail(props: SessionDetailProps) {
-  const { session, events, height, width } = props;
-  const sessionColor = getSessionColor(session.session_id);
-  const statusColor = getStatusColor(session.status);
-  const now = Date.now() / 1000;
-  const duration = session.last_seen - session.first_seen;
+class EventRow {
+  readonly node: BoxRenderable;
+  private timeText: TextRenderable;
+  private iconText: TextRenderable;
+  private nameText: TextRenderable;
+  private detailText: TextRenderable;
 
-  // Info section
-  const infoRows = [
-    createInfoRow("Session", session.session_id, sessionColor),
-    createInfoRow("Status", session.status, statusColor),
-    createInfoRow("Model", session.model || "—", colors.cyan),
-    createInfoRow("Project", session.cwd || "—", colors.textPrimary),
-    createInfoRow(
-      "Tmux",
-      session.tmux_session
-        ? `${session.tmux_session}:${session.tmux_window}.${session.tmux_pane}`
-        : "—",
-      colors.textSecondary
-    ),
-    createInfoRow("Duration", formatDuration(duration), colors.textSecondary),
-    createInfoRow("Events", String(session.event_count), colors.purple),
-    createInfoRow("Tool calls", String(session.tool_call_count), colors.green),
-    createInfoRow("Last active", formatTimeAgo(session.last_seen), colors.textSecondary),
-  ];
+  constructor(renderer: any) {
+    this.timeText = new TextRenderable(renderer, { content: "".padEnd(12), width: 12, fg: colors.textDim });
+    this.iconText = new TextRenderable(renderer, { content: "".padEnd(4), width: 4, fg: colors.textPrimary });
+    this.nameText = new TextRenderable(renderer, { content: "".padEnd(12), width: 12, fg: colors.textSecondary });
+    this.detailText = new TextRenderable(renderer, { content: "", fg: colors.textPrimary });
+    this.node = new BoxRenderable(renderer, {
+      width: "100%",
+      height: 1,
+      flexDirection: "row",
+      visible: false,
+    });
+    this.node.add(this.timeText);
+    this.node.add(this.iconText);
+    this.node.add(this.nameText);
+    this.node.add(this.detailText);
+  }
 
-  // Event history (most recent events)
-  const maxEventRows = Math.max(1, height - infoRows.length - 6);
-  const recentEvents = events.slice(-maxEventRows);
-
-  const eventRows = recentEvents.map((event) => {
-    const time = formatTimestamp(event.timestamp);
+  update(event: Event, maxDetailWidth: number) {
     const icon = eventIcons[event.event_type] || "•";
     const toolIcon = event.tool_name ? toolIcons[event.tool_name] || "" : "";
 
@@ -84,54 +83,142 @@ export function createSessionDetail(props: SessionDetailProps) {
       detail = truncate(event.notification_message, 40);
     }
 
-    return Box(
-      { width: "100%", height: 1, flexDirection: "row" },
-      Text({ content: `  ${time} `, fg: colors.textDim, width: 12 }),
-      Text({ content: `${icon}${toolIcon} `, width: 4 }),
-      Text({
-        content: (event.tool_name || event.event_type).padEnd(12),
-        fg: colors.textSecondary,
-        width: 12,
-      }),
-      Text({
-        content: truncate(detail, Math.max(10, width - 34)),
-        fg: colors.textPrimary,
-      })
-    );
-  });
+    this.timeText.content = `  ${formatTimestamp(event.timestamp)} `;
+    this.iconText.content = `${icon}${toolIcon} `;
+    this.nameText.content = (event.tool_name || event.event_type).padEnd(12);
+    this.detailText.content = truncate(detail, Math.max(10, maxDetailWidth));
+    this.node.visible = true;
+  }
 
-  return Box(
-    {
+  hide() {
+    this.node.visible = false;
+  }
+}
+
+export class SessionDetail {
+  readonly node: BoxRenderable;
+  private titleText: TextRenderable;
+  private separatorText: TextRenderable;
+  private rows: {
+    session: InfoRow;
+    status: InfoRow;
+    model: InfoRow;
+    project: InfoRow;
+    tmux: InfoRow;
+    duration: InfoRow;
+    events: InfoRow;
+    toolCalls: InfoRow;
+    lastActive: InfoRow;
+  };
+  private eventsContainer: BoxRenderable;
+  private eventRows: EventRow[] = [];
+  private currentWidth = 80;
+
+  constructor(renderer: any) {
+    this.titleText = new TextRenderable(renderer, {
+      content: " Session: — ",
+      fg: colors.textPrimary,
+    });
+    this.separatorText = new TextRenderable(renderer, {
+      content: "─".repeat(40),
+      fg: colors.textMuted,
+    });
+
+    this.rows = {
+      session: new InfoRow(renderer, "Session"),
+      status: new InfoRow(renderer, "Status"),
+      model: new InfoRow(renderer, "Model"),
+      project: new InfoRow(renderer, "Project"),
+      tmux: new InfoRow(renderer, "Tmux"),
+      duration: new InfoRow(renderer, "Duration"),
+      events: new InfoRow(renderer, "Events"),
+      toolCalls: new InfoRow(renderer, "Tool calls"),
+      lastActive: new InfoRow(renderer, "Last active"),
+    };
+
+    this.eventsContainer = new BoxRenderable(renderer, {
       width: "100%",
-      height,
+      flexGrow: 1,
+      flexDirection: "column",
+    });
+    for (let i = 0; i < MAX_EVENT_ROWS; i++) {
+      const row = new EventRow(renderer);
+      this.eventRows.push(row);
+      this.eventsContainer.add(row.node);
+    }
+
+    this.node = new BoxRenderable(renderer, {
+      width: "100%",
       flexDirection: "column",
       borderStyle: "rounded",
-      borderColor: sessionColor,
+      borderColor: colors.border,
       backgroundColor: colors.bgPanel,
       paddingLeft: 1,
       paddingRight: 1,
-    },
-    // Title
-    Box(
+      visible: false,
+    });
+
+    const titleRow = Box(
       { width: "100%", flexDirection: "row", justifyContent: "space-between" },
-      Text({
-        content: ` Session: ${shortenSessionId(session.session_id)} `,
-        fg: sessionColor,
-        bold: true,
-      }),
-      Text({
-        content: "esc:back ",
-        fg: colors.textDim,
-      })
-    ),
-    // Separator
-    Text({ content: "─".repeat(Math.max(10, width - 4)), fg: colors.textMuted }),
-    // Info section
-    ...infoRows,
-    // Separator
-    Text({ content: "", fg: colors.textMuted }),
-    Text({ content: " Recent Events:", fg: colors.textDim, bold: true }),
-    // Event history
-    ...eventRows
-  );
+      this.titleText,
+      Text({ content: "esc:back ", fg: colors.textDim })
+    );
+
+    this.node.add(titleRow as any);
+    this.node.add(this.separatorText);
+    this.node.add(this.rows.session.node);
+    this.node.add(this.rows.status.node);
+    this.node.add(this.rows.model.node);
+    this.node.add(this.rows.project.node);
+    this.node.add(this.rows.tmux.node);
+    this.node.add(this.rows.duration.node);
+    this.node.add(this.rows.events.node);
+    this.node.add(this.rows.toolCalls.node);
+    this.node.add(this.rows.lastActive.node);
+    this.node.add(new TextRenderable(renderer, { content: "", fg: colors.textMuted }));
+    this.node.add(new TextRenderable(renderer, { content: " Recent Events:", fg: colors.textDim }));
+    this.node.add(this.eventsContainer);
+  }
+
+  setSize(width: number, height: number) {
+    this.node.width = width;
+    this.node.height = height;
+    this.currentWidth = width;
+    this.separatorText.content = "─".repeat(Math.max(10, width - 4));
+  }
+
+  update(session: SessionInfo, events: Event[]) {
+    const sessionColor = getSessionColor(session.session_id);
+    const statusColor = getStatusColor(session.status);
+    const duration = session.last_seen - session.first_seen;
+
+    this.node.borderColor = sessionColor;
+    this.titleText.content = ` Session: ${shortenSessionId(session.session_id)} `;
+    this.titleText.fg = sessionColor;
+
+    this.rows.session.set(session.session_id, sessionColor);
+    this.rows.status.set(session.status, statusColor);
+    this.rows.model.set(session.model || "—", colors.cyan);
+    this.rows.project.set(session.cwd || "—", colors.textPrimary);
+    this.rows.tmux.set(
+      session.tmux_session
+        ? `${session.tmux_session}:${session.tmux_window}.${session.tmux_pane}`
+        : "—",
+      colors.textSecondary
+    );
+    this.rows.duration.set(formatDuration(duration), colors.textSecondary);
+    this.rows.events.set(String(session.event_count), colors.purple);
+    this.rows.toolCalls.set(String(session.tool_call_count), colors.green);
+    this.rows.lastActive.set(formatTimeAgo(session.last_seen), colors.textSecondary);
+
+    const visible = events.slice(-MAX_EVENT_ROWS);
+    const detailMax = Math.max(10, this.currentWidth - 34);
+    for (let i = 0; i < this.eventRows.length; i++) {
+      if (i < visible.length) {
+        this.eventRows[i].update(visible[i], detailMax);
+      } else {
+        this.eventRows[i].hide();
+      }
+    }
+  }
 }
